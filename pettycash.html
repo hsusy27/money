@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中心零用金 — 費用管理</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">经费子项目</div>
+        <h1>中心零用金</h1>
+        <div class="desc">中心日常零用金的收支紀錄，含每月結餘與累計結餘。</div>
+      </div>
+      <div class="header-actions no-print">
+        <div class="month-picker">
+          <select id="monthSelect"></select>
+        </div>
+        <button class="btn btn-outline" id="btnNewMonth">＋ 新增月份</button>
+        <button class="btn btn-outline" id="btnAdd">＋ 新增項目</button>
+        <button class="btn btn-primary" id="btnDownloadPdf">下載 PDF 報告</button>
+      </div>
+    </div>
+
+    <div id="reportRoot">
+      <div class="summary-strip" id="summaryStrip" style="margin-bottom:26px;"></div>
+
+      <div class="category-card">
+        <div class="category-head">
+          <div class="category-head-left"><div class="category-title">本月明細 · <span id="curMonthLabel"></span></div></div>
+        </div>
+        <div class="scroll-hint" style="margin:0 20px 10px;">← 手機請左右滑動可看到完整欄位 →</div>
+        <div id="tableWrap"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">新增項目</h3>
+      <button class="modal-close" id="modalClose">✕</button>
+    </div>
+    <div class="form-grid cols-2" id="formGrid">
+      <div class="form-field">
+        <label>發生月份</label>
+        <input type="month" id="fMonth">
+      </div>
+      <div class="form-field"></div>
+      <div class="pair-row">
+        <div class="form-field">
+          <label>項目</label>
+          <input type="text" id="fItem" placeholder="例如：文具採購">
+        </div>
+        <div class="form-field">
+          <label>次項目 / 說明</label>
+          <input type="text" id="fSubitem" placeholder="選填">
+        </div>
+      </div>
+      <div class="form-field">
+        <label>收入</label>
+        <input type="number" id="fIncome" placeholder="0">
+      </div>
+      <div class="form-field">
+        <label>支出</label>
+        <input type="number" id="fExpense" placeholder="0">
+      </div>
+      <div class="form-field span-2">
+        <label>備註</label>
+        <textarea id="fNote"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" id="btnCancel">取消</button>
+      <button class="btn btn-primary" id="btnSave">儲存</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/seed.js"></script>
+<script src="assets/app.js"></script>
+<script src="assets/sync.js"></script>
+<script>
+ensureSeeded();
+renderSidebar('pettycash');
+
+const MODULE = 'pettycash';
+let currentMonth = null;
+let editingId = null;
+
+function init(){
+  const entries = getEntries(MODULE);
+  let months = allMonths(entries);
+  if(months.length===0){ months = [currentMonthStr()]; }
+  const cm = currentMonthStr();
+  currentMonth = months.includes(cm) ? cm : months[months.length-1];
+  buildMonthOptions(document.getElementById('monthSelect'), months, currentMonth);
+  renderAll();
+}
+
+document.getElementById('monthSelect').onchange = (e)=>{ currentMonth = e.target.value; renderAll(); };
+
+document.getElementById('btnNewMonth').onclick = ()=>{
+  const months = allMonths(getEntries(MODULE));
+  const base = months.length ? months[months.length-1] : currentMonthStr();
+  const next = nextMonthStr(base);
+  if(!months.includes(next)) months.push(next);
+  months.sort();
+  currentMonth = next;
+  buildMonthOptions(document.getElementById('monthSelect'), months, currentMonth);
+  renderAll();
+};
+
+document.getElementById('btnDownloadPdf').onclick = ()=>{
+  downloadPdf('reportRoot', `pettycash_${currentMonth}.pdf`);
+};
+
+function renderAll(){
+  document.getElementById('curMonthLabel').textContent = monthLabel(currentMonth);
+  const sum = simpleModuleMonthSummary(MODULE, currentMonth);
+  const running = simpleModuleRunningBalance(MODULE, currentMonth);
+  document.getElementById('summaryStrip').innerHTML = `
+    <div class="stat-card"><div class="label">本月收入</div><div class="value">$ ${fmtMoney(sum.income)}</div></div>
+    <div class="stat-card"><div class="label">本月支出</div><div class="value">$ ${fmtMoney(sum.expense)}</div></div>
+    <div class="stat-card ${sum.balance<0?'owe':'settled'}"><div class="label">本月結餘</div><div class="value">$ ${fmtMoney(sum.balance)}</div></div>
+    <div class="stat-card"><div class="label">累計至本月結餘</div><div class="value">$ ${fmtMoney(running)}</div></div>
+  `;
+
+  const list = sum.entries;
+  document.getElementById('tableWrap').innerHTML = list.length ? `
+    <div class="table-scroll">
+    <table class="entry-table">
+      <thead><tr><th>項目 / 次項目</th><th style="text-align:right">收入</th><th style="text-align:right">支出</th><th>備註</th><th></th></tr></thead>
+      <tbody>
+      ${list.map(e=>`
+        <tr>
+          <td><div class="item-main">${e.item||''}</div>${e.subitem?`<div class="item-sub">${e.subitem}</div>`:''}</td>
+          <td class="num">${fmtMoney(e.income)}</td>
+          <td class="num">${fmtMoney(e.expense)}</td>
+          <td class="note">${e.note||''}</td>
+          <td class="no-print"><div class="row-actions">
+            <button class="icon-btn" onclick="openEdit('${e.id}')">編輯</button>
+            <button class="icon-btn" onclick="removeEntry('${e.id}')">刪除</button>
+          </div></td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+    </div>
+  ` : `<div class="entry-empty">本月無資料，點右上角「＋ 新增項目」開始記錄。</div>`;
+}
+
+document.getElementById('btnAdd').onclick = ()=> openAdd();
+
+function openAdd(){
+  editingId = null;
+  document.getElementById('modalTitle').textContent = '新增項目';
+  document.getElementById('fMonth').value = currentMonth;
+  document.getElementById('fItem').value = '';
+  document.getElementById('fSubitem').value = '';
+  document.getElementById('fIncome').value = '';
+  document.getElementById('fExpense').value = '';
+  document.getElementById('fNote').value = '';
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function openEdit(id){
+  const e = getEntries(MODULE).find(x=>x.id===id);
+  if(!e) return;
+  editingId = id;
+  document.getElementById('modalTitle').textContent = '編輯項目';
+  document.getElementById('fMonth').value = e.month;
+  document.getElementById('fItem').value = e.item||'';
+  document.getElementById('fSubitem').value = e.subitem||'';
+  document.getElementById('fIncome').value = e.income||'';
+  document.getElementById('fExpense').value = e.expense||'';
+  document.getElementById('fNote').value = e.note||'';
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal(){ document.getElementById('modalOverlay').classList.remove('open'); }
+document.getElementById('modalClose').onclick = closeModal;
+document.getElementById('btnCancel').onclick = closeModal;
+
+document.getElementById('btnSave').onclick = ()=>{
+  const payload = {
+    month: document.getElementById('fMonth').value || currentMonth,
+    item: document.getElementById('fItem').value.trim(),
+    subitem: document.getElementById('fSubitem').value.trim(),
+    income: Number(document.getElementById('fIncome').value)||0,
+    expense: Number(document.getElementById('fExpense').value)||0,
+    note: document.getElementById('fNote').value.trim(),
+  };
+  if(!payload.item){ alert('請輸入項目名稱'); return; }
+  if(editingId){ updateEntry(MODULE, editingId, payload); }
+  else{ addEntry(MODULE, payload); }
+
+  const months = allMonths(getEntries(MODULE));
+  if(!months.includes(currentMonth)) months.push(currentMonth);
+  buildMonthOptions(document.getElementById('monthSelect'), months.sort(), payload.month);
+  currentMonth = payload.month;
+
+  closeModal();
+  renderAll();
+};
+function removeEntry(id){
+  if(!confirm('確定要刪除這筆項目嗎？')) return;
+  deleteEntry(MODULE, id);
+  renderAll();
+}
+
+(async function(){
+  await initialSyncOnLoad();
+  init();
+  if(typeof watchCloudChanges==='function') watchCloudChanges();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>費用管理 — 首頁總覽</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">Overview</div>
+        <h1>首頁總覽</h1>
+        <div class="desc">四個經費子項目的入口，以及本月與主任之間應收應付的快照。資料只存在這台裝置的瀏覽器裡，記得定期用左下角「匯出備份」保存一份。</div>
+      </div>
+    </div>
+
+    <div id="hintBanner" class="hint-banner" style="display:none"></div>
+
+    <div class="divider-label">本月快照 · <span id="monthLabelText"></span></div>
+    <div class="summary-strip" id="snapshotStrip"></div>
+
+    <div class="divider-label">經費子項目</div>
+    <div class="module-grid" id="moduleGrid"></div>
+
+  </main>
+</div>
+
+<script src="assets/seed.js"></script>
+<script src="assets/app.js"></script>
+<script src="assets/sync.js"></script>
+<script>
+  ensureSeeded();
+  renderSidebar('index');
+
+  function renderDashboard(){
+    const month = currentMonthStr();
+    const dEntries = getEntries('director');
+    const months = allMonths(dEntries);
+    const useMonth = months.includes(month) ? month : (months[months.length-1] || month);
+    document.getElementById('monthLabelText').textContent = monthLabel(useMonth);
+
+    if(months.length === 0){
+      const hb = document.getElementById('hintBanner');
+      hb.style.display = 'block';
+      hb.innerHTML = '目前還沒有任何主任月費用資料，前往「主任月費用」頁面開始新增第一筆吧。';
+    }
+
+    const recon = directorReconForMonth(useMonth);
+    const outstanding = directorAllOutstanding();
+    const owedThisMonth = Object.values(recon.owedNew).reduce((a,b)=>a+b,0);
+    const settledThisMonth = Object.values(recon.settledThisMonth).reduce((a,b)=>a+b,0);
+    const passThisMonth = Object.values(recon.passthrough).reduce((a,b)=>a+b,0);
+
+    document.getElementById('snapshotStrip').innerHTML = `
+      <div class="stat-card owe">
+        <div class="label">主任目前累計未歸還金額</div>
+        <div class="value">$ ${fmtMoney(outstanding.total)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">本月新增待歸還</div>
+        <div class="value">$ ${fmtMoney(owedThisMonth)}</div>
+      </div>
+      <div class="stat-card settled">
+        <div class="label">本月已入帳給主任</div>
+        <div class="value">$ ${fmtMoney(settledThisMonth)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">本月代轉款項（無需歸還）</div>
+        <div class="value">$ ${fmtMoney(passThisMonth)}</div>
+      </div>
+    `;
+
+    const hospitalBal = simpleModuleRunningBalance('hospital');
+    const pettyBal = simpleModuleRunningBalance('pettycash');
+    const dinnerBal = simpleModuleRunningBalance('teamdinner');
+    const projectAccounts = getProjectAccounts();
+    const projectRemain = projectAccounts.reduce((s,a)=> s + projectAccountTotals(a).grand.remaining, 0);
+
+    const cards = [
+      { key:'director', title:'主任月費用', desc:'依會計代號分卡追蹤，含與主任之間的墊款對帳', foot: `累計未歸還 $${fmtMoney(outstanding.total)}`, ring:'主' },
+      { key:'hospital', title:'院內計畫', desc:'院內各項計畫收支記錄', foot:`目前結餘 $${fmtMoney(hospitalBal)}`, ring:'計' },
+      { key:'pettycash', title:'中心零用金', desc:'中心日常零用金收支', foot:`目前結餘 $${fmtMoney(pettyBal)}`, ring:'零' },
+      { key:'teamdinner', title:'小組聚餐', desc:'小組聚餐費用記錄', foot:`目前結餘 $${fmtMoney(dinnerBal)}`, ring:'餐' },
+      { key:'project', title:'研究計畫經費', desc:'計畫預算核定金額與核銷追蹤', foot:`${projectAccounts.length} 個帳戶 · 剩餘 $${fmtMoney(projectRemain)}`, ring:'研' },
+    ];
+    document.getElementById('moduleGrid').innerHTML = cards.map(c=>`
+      <a class="module-card" href="${MODULES[c.key].path}">
+        <div class="ring">${c.ring}</div>
+        <h3>${c.title}</h3>
+        <p>${c.desc}</p>
+        <div class="footline">${c.foot}</div>
+      </a>
+    `).join('');
+  }
+
+  (async function(){
+    await initialSyncOnLoad();
+    renderDashboard();
+    if(typeof watchCloudChanges==='function') watchCloudChanges();
+  })();
+</script>
+</body>
+</html>

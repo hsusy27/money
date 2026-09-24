@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>歷年對帳 — 費用管理</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">Reconciliation</div>
+        <h1>歷年對帳</h1>
+        <div class="desc">彙整主任月費用中所有尚未歸還的墊款，以及四個子項目每年的收支總表，方便掌握主任目前還有多少錢還沒拿回去。</div>
+      </div>
+      <div class="header-actions no-print">
+        <button class="btn btn-primary" id="btnDownloadPdf">下載 PDF 報告</button>
+      </div>
+    </div>
+
+    <div id="reportRoot">
+
+      <div class="summary-strip" id="headlineStrip" style="margin-bottom:28px;"></div>
+
+      <div class="divider-label">尚未歸還主任的墊款明細（可直接標記入帳，達成跨月沖帳）</div>
+      <div id="outstandingRoot" style="margin-bottom:30px;"></div>
+
+      <div class="divider-label">代轉款項中「尚未交給中心」的明細（可直接標記已交付）</div>
+      <div id="pendingCenterRoot" style="margin-bottom:30px;"></div>
+
+      <div class="divider-label">主任月費用 · 歷年收支總表</div>
+      <div class="scroll-hint">← 手機請左右滑動可看到完整欄位 →</div>
+      <div class="table-scroll" style="margin-bottom:30px;">
+        <table class="recon-table" id="directorYearTable"></table>
+      </div>
+
+      <div class="divider-label">其他子項目 · 歷年結餘總表</div>
+      <div class="table-scroll">
+        <table class="recon-table" id="otherYearTable"></table>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>標記入帳</h3>
+      <button class="modal-close" id="modalClose">✕</button>
+    </div>
+    <div class="form-grid cols-2">
+      <div class="form-field span-2">
+        <label>入帳月份</label>
+        <input type="month" id="fSettledMonth">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" id="btnCancel">取消</button>
+      <button class="btn btn-primary" id="btnConfirmSettle">確認已入帳</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/seed.js"></script>
+<script src="assets/app.js"></script>
+<script src="assets/sync.js"></script>
+<script>
+ensureSeeded();
+renderSidebar('ledger');
+
+document.getElementById('btnDownloadPdf').onclick = ()=> downloadPdf('reportRoot', `歷年對帳_${currentMonthStr()}.pdf`);
+
+let pendingSettleId = null;
+
+function renderHeadline(){
+  const all = directorAllOutstanding();
+  const pending = directorPendingToCenterAll();
+  const byFund = {}; FUND_SOURCES.forEach(f=>byFund[f.key]=0);
+  all.entries.forEach(e=>{ byFund[e.fundSource]=(byFund[e.fundSource]||0)+directorEntryAmount(e); });
+  document.getElementById('headlineStrip').innerHTML = `
+    <div class="stat-card owe">
+      <div class="label">主任目前尚未拿回的總金額</div>
+      <div class="value">$ ${fmtMoney(all.total)}</div>
+    </div>
+    ${FUND_SOURCES.map(f=>`
+      <div class="stat-card">
+        <div class="label">${f.label}來源未歸還</div>
+        <div class="value">$ ${fmtMoney(byFund[f.key])}</div>
+      </div>
+    `).join('')}
+    <div class="stat-card" style="border-color:var(--center);">
+      <div class="label">代轉款項中尚未交給中心</div>
+      <div class="value" style="color:var(--center);">$ ${fmtMoney(pending.total)}</div>
+    </div>
+  `;
+}
+
+function renderOutstanding(){
+  const all = directorAllOutstanding();
+  const root = document.getElementById('outstandingRoot');
+  if(all.entries.length===0){
+    root.innerHTML = `<div class="empty-state"><div class="big">✓</div>目前沒有任何積欠主任的墊款，帳務已全部結清。</div>`;
+    return;
+  }
+  root.innerHTML = `<div class="outstanding-list">` + all.entries.map(e=>`
+    <div class="outstanding-item">
+      <div>
+        <div class="item-main">${e.item||''} ${e.subitem?`· ${e.subitem}`:''}</div>
+        <div class="meta">${monthLabel(e.month)} · ${fundLabelOf(e.fundSource)} · ${categoryLabelOf(e.category)}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <div class="amt">$ ${fmtMoney(directorEntryAmount(e))}</div>
+        <button class="btn btn-sm btn-outline no-print" onclick="openSettle('${e.id}')">標記已入帳</button>
+      </div>
+    </div>
+  `).join('') + `</div>`;
+}
+
+function renderPendingToCenter(){
+  const pending = directorPendingToCenterAll();
+  const root = document.getElementById('pendingCenterRoot');
+  if(pending.entries.length===0){
+    root.innerHTML = `<div class="empty-state"><div class="big">✓</div>目前沒有還沒交給中心的代轉款項。</div>`;
+    return;
+  }
+  root.innerHTML = `<div class="outstanding-list">` + pending.entries.map(e=>`
+    <div class="outstanding-item to-center">
+      <div>
+        <div class="item-main">${e.item||''} ${e.subitem?`· ${e.subitem}`:''}</div>
+        <div class="meta">${monthLabel(e.month)} · ${fundLabelOf(e.fundSource)} · ${categoryLabelOf(e.category)}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <div class="amt">$ ${fmtMoney(directorEntryAmount(e))}</div>
+        <button class="btn btn-sm btn-outline no-print" onclick="openSettle('${e.id}')">標記已交給中心</button>
+      </div>
+    </div>
+  `).join('') + `</div>`;
+}
+
+function fundLabelOf(k){ return FUND_SOURCES.find(f=>f.key===k)?.label || k; }
+function categoryLabelOf(k){ const c = DIRECTOR_CATEGORIES.find(c=>c.key===k); return c ? (c.code || c.label) : k; }
+
+function openSettle(id){
+  pendingSettleId = id;
+  const e = getEntries('director').find(x=>x.id===id);
+  document.getElementById('fSettledMonth').value = e ? e.month : currentMonthStr();
+  const isPass = e && paymentTypeOf(e)==='passthrough';
+  document.querySelector('#modalOverlay .modal-head h3').textContent = isPass ? '標記已交給中心' : '標記入帳';
+  document.querySelector('#modalOverlay label').textContent = isPass ? '交付月份' : '入帳月份';
+  document.getElementById('btnConfirmSettle').textContent = isPass ? '確認已交給中心' : '確認已入帳';
+  document.getElementById('modalOverlay').classList.add('open');
+}
+document.getElementById('modalClose').onclick = ()=> document.getElementById('modalOverlay').classList.remove('open');
+document.getElementById('btnCancel').onclick = ()=> document.getElementById('modalOverlay').classList.remove('open');
+document.getElementById('btnConfirmSettle').onclick = ()=>{
+  const m = document.getElementById('fSettledMonth').value;
+  if(!m){ alert('請選擇入帳月份'); return; }
+  updateEntry('director', pendingSettleId, { settled:true, settledMonth:m });
+  document.getElementById('modalOverlay').classList.remove('open');
+  renderPage();
+};
+
+function yearOf(m){ return m.split('-')[0]; }
+
+function renderDirectorYearTable(){
+  const entries = getEntries('director');
+  const years = Array.from(new Set(entries.map(e=>yearOf(e.month)))).sort();
+  let html = '<thead><tr><th>年度</th><th>主任墊付總額</th><th>已入帳歸還</th><th>代轉款項</th><th>年底累計未歸還</th></tr></thead><tbody>';
+  years.forEach(y=>{
+    const yEntries = entries.filter(e=>yearOf(e.month)===y);
+    const advanced = yEntries.filter(e=>paymentTypeOf(e)==='reimbursable').reduce((s,e)=>s+(Number(e.expense)||0),0);
+    const settled = yEntries.filter(e=>paymentTypeOf(e)==='reimbursable' && e.settled && yearOf(e.settledMonth)===y).reduce((s,e)=>s+(Number(e.expense)||0),0);
+    const pass = yEntries.filter(e=>paymentTypeOf(e)==='passthrough').reduce((s,e)=>s+(Number(e.expense)||0),0);
+    const outstanding = entries.filter(e=>paymentTypeOf(e)==='reimbursable' && !e.settled && yearOf(e.month)<=y).reduce((s,e)=>s+(Number(e.expense)||0),0);
+    html += `<tr><td>${y}</td><td>${fmtMoney(advanced)}</td><td>${fmtMoney(settled)}</td><td>${fmtMoney(pass)}</td><td>${fmtMoney(outstanding)}</td></tr>`;
+  });
+  if(years.length===0) html += '<tr><td colspan="5" style="text-align:center;color:var(--muted)">尚無資料</td></tr>';
+  html += '</tbody>';
+  document.getElementById('directorYearTable').innerHTML = html;
+}
+
+function renderOtherYearTable(){
+  const mods = ['hospital','pettycash','teamdinner'];
+  const allYears = new Set();
+  mods.forEach(m=> getEntries(m).forEach(e=> allYears.add(yearOf(e.month))));
+  const years = Array.from(allYears).sort();
+  let html = '<thead><tr><th>年度</th><th>院內計畫結餘</th><th>中心零用金結餘</th><th>小組聚餐結餘</th></tr></thead><tbody>';
+  years.forEach(y=>{
+    const vals = mods.map(m=>{
+      const es = getEntries(m).filter(e=>yearOf(e.month)===y);
+      const inc = es.reduce((s,e)=>s+(Number(e.income)||0),0);
+      const exp = es.reduce((s,e)=>s+(Number(e.expense)||0),0);
+      return inc-exp;
+    });
+    html += `<tr><td>${y}</td>${vals.map(v=>`<td>${fmtMoney(v)}</td>`).join('')}</tr>`;
+  });
+  if(years.length===0) html += '<tr><td colspan="4" style="text-align:center;color:var(--muted)">尚無資料</td></tr>';
+  html += '</tbody>';
+  document.getElementById('otherYearTable').innerHTML = html;
+}
+
+function renderPage(){
+  renderHeadline();
+  renderOutstanding();
+  renderPendingToCenter();
+  renderDirectorYearTable();
+  renderOtherYearTable();
+}
+(async function(){
+  await initialSyncOnLoad();
+  renderPage();
+  if(typeof watchCloudChanges==='function') watchCloudChanges();
+})();
+</script>
+</body>
+</html>
