@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>費用管理 — 首頁總覽</title>
 
-  <!-- 1. 樣式檔 -->
-  <link rel="stylesheet" href="./style.css">
+  <!-- 1. 樣式檔（指向 asset 資料夾） -->
+  <link rel="stylesheet" href="./asset/style.css">
 
-  <!-- 2. 第三方套件（Firebase 先載入） -->
+  <!-- 2. Firebase CDN 套件 -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
-  <!-- 3. 自訂邏輯腳本（改用相對路徑 ./ 並且依照依賴順序載入） -->
-  <script src="./sync.js"></script>
-  <script src="./seed.js"></script>
-  <script src="./app.js"></script>
+  <!-- 3. 自訂 JS 檔（指向 asset 資料夾，並照依賴順序載入） -->
+  <script src="./asset/sync.js"></script>
+  <script src="./asset/seed.js"></script>
+  <script src="./asset/app.js"></script>
 </head>
 <body>
 <div class="app-shell">
