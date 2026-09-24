@@ -12,7 +12,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
-  <!-- 3. 自訂 JS 檔（指向 asset 資料夾，並照依賴順序載入） -->
+  <!-- 3. 自訂 JS 檔（指向 asset 資料夾，依正確順序載入） -->
   <script src="./asset/sync.js"></script>
   <script src="./asset/seed.js"></script>
   <script src="./asset/app.js"></script>
@@ -40,9 +40,6 @@
   </main>
 </div>
 
-<script src="assets/seed.js"></script>
-<script src="assets/app.js"></script>
-<script src="assets/sync.js"></script>
 <script>
   ensureSeeded();
   renderSidebar('index');
